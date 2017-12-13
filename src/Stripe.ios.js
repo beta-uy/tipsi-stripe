@@ -1,116 +1,120 @@
-import { NativeModules } from 'react-native'
-import processTheme from './utils/processTheme'
-import checkArgs from './utils/checkArgs'
-import checkInit from './utils/checkInit'
-import * as types from './utils/types'
+import { NativeModules } from 'react-native';
+import processTheme from './utils/processTheme';
+import checkArgs from './utils/checkArgs';
+import checkInit from './utils/checkInit';
+import * as types from './utils/types';
 
-const { TPSStripeManager } = NativeModules
+const { TPSStripeManager } = NativeModules;
 
 class Stripe {
-  stripeInitialized = false
+  stripeInitialized = false;
 
   constructor() {
     if (TPSStripeManager) {
-
       // Error domain
-      this.TPSErrorDomain = TPSStripeManager.TPSErrorDomain
+      this.TPSErrorDomain = TPSStripeManager.TPSErrorDomain;
 
       // Error codes
-      this.TPSErrorCodeApplePayNotConfigured = TPSStripeManager.TPSErrorCodeApplePayNotConfigured
-      this.TPSErrorCodePreviousRequestNotCompleted = TPSStripeManager.TPSErrorCodePreviousRequestNotCompleted
-      this.TPSErrorCodeUserCancel = TPSStripeManager.TPSErrorCodeUserCancel
+      this.TPSErrorCodeApplePayNotConfigured = TPSStripeManager.TPSErrorCodeApplePayNotConfigured;
+      this.TPSErrorCodePreviousRequestNotCompleted =
+        TPSStripeManager.TPSErrorCodePreviousRequestNotCompleted;
+      this.TPSErrorCodeUserCancel = TPSStripeManager.TPSErrorCodeUserCancel;
     }
   }
 
   init = (options = {}) => {
-    checkArgs(
-      types.initOptionsPropTypes,
-      options, 'options', 'Stripe.init'
-    )
-    this.stripeInitialized = true
-    return TPSStripeManager.init(options)
-  }
+    checkArgs(types.initOptionsPropTypes, options, 'options', 'Stripe.init');
+    this.stripeInitialized = true;
+    return TPSStripeManager.init(options);
+  };
 
   deviceSupportsApplePay = () => {
-    checkInit(this)
-    return TPSStripeManager.deviceSupportsApplePay()
-  }
+    checkInit(this);
+    return TPSStripeManager.deviceSupportsApplePay();
+  };
 
   canMakeApplePayPayments = (options = {}) => {
-    checkInit(this)
+    checkInit(this);
     checkArgs(
       types.canMakeApplePayPaymentsOptionsPropTypes,
-      options, 'options', 'Stripe.canMakeApplePayPayments'
-    )
-    return TPSStripeManager.canMakeApplePayPayments(options)
-  }
+      options,
+      'options',
+      'Stripe.canMakeApplePayPayments'
+    );
+    return TPSStripeManager.canMakeApplePayPayments(options);
+  };
 
   paymentRequestWithApplePay = (items = [], options = {}) => {
-    checkInit(this)
+    checkInit(this);
     checkArgs(
       types.paymentRequestWithApplePayItemsPropTypes,
-      { items }, 'items', 'Stripe.paymentRequestWithApplePay'
-    )
+      { items },
+      'items',
+      'Stripe.paymentRequestWithApplePay'
+    );
     checkArgs(
       types.paymentRequestWithApplePayOptionsPropTypes,
-      options, 'options', 'Stripe.paymentRequestWithApplePay'
-    )
-    return TPSStripeManager.paymentRequestWithApplePay(items, options)
-  }
+      options,
+      'options',
+      'Stripe.paymentRequestWithApplePay'
+    );
+    return TPSStripeManager.paymentRequestWithApplePay(items, options);
+  };
 
   completeApplePayRequest = () => {
-    checkInit(this)
-    return TPSStripeManager.completeApplePayRequest()
-  }
+    checkInit(this);
+    return TPSStripeManager.completeApplePayRequest();
+  };
 
   cancelApplePayRequest = () => {
-    checkInit(this)
-    return TPSStripeManager.cancelApplePayRequest()
-  }
+    checkInit(this);
+    return TPSStripeManager.cancelApplePayRequest();
+  };
 
   openApplePaySetup = () => {
-    checkInit(this)
-    return TPSStripeManager.openApplePaySetup()
-  }
+    checkInit(this);
+    return TPSStripeManager.openApplePaySetup();
+  };
 
   paymentRequestWithCardForm = (options = {}) => {
-    checkInit(this)
+    checkInit(this);
     checkArgs(
       types.paymentRequestWithCardFormOptionsPropTypes,
-      options, 'options', 'Stripe.paymentRequestWithCardForm'
-    )
+      options,
+      'options',
+      'Stripe.paymentRequestWithCardForm'
+    );
     return TPSStripeManager.paymentRequestWithCardForm({
       ...options,
       theme: processTheme(options.theme),
-    })
-  }
+    });
+  };
 
   createTokenWithCard = (params = {}) => {
-    checkInit(this)
+    checkInit(this);
     checkArgs(
       types.createTokenWithCardParamsPropTypes,
-      params, 'params', 'Stripe.createTokenWithCard'
-    )
-    return TPSStripeManager.createTokenWithCard(params)
-  }
+      params,
+      'params',
+      'Stripe.createTokenWithCard'
+    );
+    return TPSStripeManager.createTokenWithCard(params);
+  };
 
   createTokenWithBankAccount = (params = {}) => {
-    checkInit(this)
+    checkInit(this);
     checkArgs(
       types.createTokenWithBankAccountParamsPropTypes,
-      params, 'params', 'Stripe.createTokenWithBankAccount'
-    )
-    return TPSStripeManager.createTokenWithBankAccount(params)
-  }
+      params,
+      'params',
+      'Stripe.createTokenWithBankAccount'
+    );
+    return TPSStripeManager.createTokenWithBankAccount(params);
+  };
 
-  createSourceWithParams = (params = {}) => {
-    checkInit(this)
-    checkArgs(
-      types.createSourceWithParamsPropType,
-      params, 'params', 'Stripe.createSourceWithParams'
-    )
-    return TPSStripeManager.createSourceWithParams(params)
-  }
+  updateApplePayShippingMethod = (params = {}) => {
+    return TPSStripeManager.updateApplePayShippingMethod(params);
+  };
 }
 
-export default new Stripe()
+export default new Stripe();

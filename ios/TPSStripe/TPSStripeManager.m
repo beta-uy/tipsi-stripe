@@ -10,6 +10,7 @@
 #import <React/RCTUtils.h>
 #import <React/RCTConvert.h>
 
+#import "TPSUpdateShippingCosts.h"
 #import "TPSError.h"
 
 @implementation RCTConvert (STPBankAccountHolderType)
@@ -87,14 +88,17 @@ NSString * const TPSPaymentNetworkVisa = @"visa";
 {
     NSString *publishableKey;
     NSString *merchantId;
-
+    
     RCTPromiseResolveBlock promiseResolver;
     RCTPromiseRejectBlock promiseRejector;
-
+    
     BOOL requestIsCompleted;
-
+    NSMutableArray<PKPaymentSummaryItem *> *summaryItemsApplePay;
+    NSMutableArray *countriesApplepay;
+    
     void (^applePayCompletion)(PKPaymentAuthorizationStatus);
-    NSError *applePayStripeError;
+    void (^shippingContactUpdateCompletion)(PKPaymentRequestShippingContactUpdate *update);
+    void (^shippingContactUpdateCompletionDeprecate)(PKPaymentAuthorizationStatus status, NSArray<PKShippingMethod *> *shippingMethods, NSArray<PKPaymentSummaryItem *> *summaryItems);
 }
 
 - (instancetype)init {
@@ -118,6 +122,7 @@ NSString * const TPSPaymentNetworkVisa = @"visa";
              };
 }
 
+
 RCT_EXPORT_MODULE();
 
 RCT_EXPORT_METHOD(init:(NSDictionary *)options) {
@@ -136,49 +141,47 @@ RCT_EXPORT_METHOD(canMakeApplePayPayments:(NSDictionary *)options
                   rejecter:(RCTPromiseRejectBlock)reject) {
     NSArray <NSString *> *paymentNetworksStrings =
     options[@"networks"] ?: [TPSStripeManager supportedPaymentNetworksStrings];
-
+    
     NSArray <PKPaymentNetwork> *networks = [self paymentNetworks:paymentNetworksStrings];
     resolve(@([PKPaymentAuthorizationViewController canMakePaymentsUsingNetworks:networks]));
 }
 
 RCT_EXPORT_METHOD(completeApplePayRequest:(RCTPromiseResolveBlock)resolve
-                                 rejecter:(RCTPromiseRejectBlock)reject) {
+                  rejecter:(RCTPromiseRejectBlock)reject) {
+    promiseResolver = resolve;
+    
     if (applePayCompletion) {
-        promiseResolver = resolve;
-        [self resolveApplePayCompletion:PKPaymentAuthorizationStatusSuccess];
-    } else {
-        resolve(nil);
+        applePayCompletion(PKPaymentAuthorizationStatusSuccess);
     }
 }
 
 RCT_EXPORT_METHOD(cancelApplePayRequest:(RCTPromiseResolveBlock)resolve
-                               rejecter:(RCTPromiseRejectBlock)reject) {
+                  rejecter:(RCTPromiseRejectBlock)reject) {
+    promiseResolver = resolve;
+    
     if (applePayCompletion) {
-        promiseResolver = resolve;
-        [self resolveApplePayCompletion:PKPaymentAuthorizationStatusFailure];
-    } else {
-        resolve(nil);
+        applePayCompletion(PKPaymentAuthorizationStatusFailure);
     }
 }
 
 RCT_EXPORT_METHOD(createTokenWithCard:(NSDictionary *)params
-                             resolver:(RCTPromiseResolveBlock)resolve
-                             rejecter:(RCTPromiseRejectBlock)reject) {
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject) {
     if(!requestIsCompleted) {
         NSError *error = [TPSError previousRequestNotCompletedError];
         reject([NSString stringWithFormat:@"%ld", error.code], error.localizedDescription, error);
         return;
     }
-
+    
     requestIsCompleted = NO;
-
+    
     STPCardParams *cardParams = [[STPCardParams alloc] init];
-
+    
     [cardParams setNumber: params[@"number"]];
     [cardParams setExpMonth: [params[@"expMonth"] integerValue]];
     [cardParams setExpYear: [params[@"expYear"] integerValue]];
     [cardParams setCvc: params[@"cvc"]];
-
+    
     [cardParams setCurrency: params[@"currency"]];
     [cardParams setName: params[@"name"]];
     [cardParams setAddressLine1: params[@"addressLine1"]];
@@ -187,10 +190,10 @@ RCT_EXPORT_METHOD(createTokenWithCard:(NSDictionary *)params
     [cardParams setAddressState: params[@"addressState"]];
     [cardParams setAddressCountry: params[@"addressCountry"]];
     [cardParams setAddressZip: params[@"addressZip"]];
-
+    
     [[STPAPIClient sharedClient] createTokenWithCard:cardParams completion:^(STPToken *token, NSError *error) {
         requestIsCompleted = YES;
-
+        
         if (error) {
             reject(nil, nil, error);
         } else {
@@ -207,11 +210,11 @@ RCT_EXPORT_METHOD(createTokenWithBankAccount:(NSDictionary *)params
         reject([NSString stringWithFormat:@"%ld", error.code], error.localizedDescription, error);
         return;
     }
-
+    
     requestIsCompleted = NO;
-
+    
     STPBankAccountParams *bankAccount = [[STPBankAccountParams alloc] init];
-
+    
     [bankAccount setAccountNumber: params[@"accountNumber"]];
     [bankAccount setCountry: params[@"countryCode"]];
     [bankAccount setCurrency: params[@"currency"]];
@@ -220,10 +223,10 @@ RCT_EXPORT_METHOD(createTokenWithBankAccount:(NSDictionary *)params
     STPBankAccountHolderType accountHolderType =
     [RCTConvert STPBankAccountHolderType:params[@"accountHolderType"]];
     [bankAccount setAccountHolderType: accountHolderType];
-
+    
     [[STPAPIClient sharedClient] createTokenWithBankAccount:bankAccount completion:^(STPToken *token, NSError *error) {
         requestIsCompleted = YES;
-
+        
         if (error) {
             reject(nil, nil, error);
         } else {
@@ -232,124 +235,36 @@ RCT_EXPORT_METHOD(createTokenWithBankAccount:(NSDictionary *)params
     }];
 }
 
-RCT_EXPORT_METHOD(createSourceWithParams:(NSDictionary *)params
+RCT_EXPORT_METHOD(paymentRequestWithCardForm:(NSDictionary *)options
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject) {
-    if(!requestIsCompleted) {
-        reject(
-               [NSString stringWithFormat:@"%ld", (long)3],
-               @"Previous request is not completed",
-               [[NSError alloc] initWithDomain:@"StripeNative" code:3 userInfo:@{NSLocalizedDescriptionKey:@"Previous request is not completed"}]
-               );
-        return;
-    }
-
-    requestIsCompleted = NO;
-
-    NSString *sourceType = params[@"type"];
-    STPSourceParams *sourceParams;
-    if ([sourceType isEqualToString:@"bancontact"]) {
-         sourceParams = [STPSourceParams bancontactParamsWithAmount:[[params objectForKey:@"amount"] unsignedIntegerValue] name:params[@"name"] returnURL:params[@"returnURL"] statementDescriptor:params[@"statementDescriptor"]];
-    }
-    if ([sourceType isEqualToString:@"bitcoin"]) {
-         sourceParams = [STPSourceParams bitcoinParamsWithAmount:[[params objectForKey:@"amount"] unsignedIntegerValue] currency:params[@"currency"] email:params[@"email"]];
-    }
-    if ([sourceType isEqualToString:@"giropay"]) {
-         sourceParams = [STPSourceParams giropayParamsWithAmount:[[params objectForKey:@"amount"] unsignedIntegerValue] name:params[@"name"] returnURL:params[@"returnURL"] statementDescriptor:params[@"statementDescriptor"]];
-    }
-    if ([sourceType isEqualToString:@"ideal"]) {
-         sourceParams = [STPSourceParams idealParamsWithAmount:[[params objectForKey:@"amount"] unsignedIntegerValue] name:params[@"name"] returnURL:params[@"returnURL"] statementDescriptor:params[@"statementDescriptor"] bank:params[@"bank"]];
-    }
-    if ([sourceType isEqualToString:@"sepaDebit"]) {
-         sourceParams = [STPSourceParams sepaDebitParamsWithName:params[@"name"] iban:params[@"iban"] addressLine1:params[@"addressLine1"] city:params[@"city"] postalCode:params[@"postalCode"] country:params[@"country"]];
-    }
-    if ([sourceType isEqualToString:@"sofort"]) {
-         sourceParams = [STPSourceParams sofortParamsWithAmount:[[params objectForKey:@"amount"] unsignedIntegerValue] returnURL:params[@"returnURL"] country:params[@"country"] statementDescriptor:params[@"statementDescriptor"]];
-    }
-    if ([sourceType isEqualToString:@"threeDSecure"]) {
-         sourceParams = [STPSourceParams threeDSecureParamsWithAmount:[[params objectForKey:@"amount"] unsignedIntegerValue] currency:params[@"currency"] returnURL:params[@"returnURL"] card:params[@"card"]];
-    }
-    if ([sourceType isEqualToString:@"alipay"]) {
-         sourceParams = [STPSourceParams alipayParamsWithAmount:[[params objectForKey:@"amount"] unsignedIntegerValue] currency:params[@"currency"] returnURL:params[@"returnURL"]];
-    }
-
-    [[STPAPIClient sharedClient] createSourceWithParams:sourceParams completion:^(STPSource *source, NSError *error) {
-        requestIsCompleted = YES;
-
-        if (error) {
-            reject(nil, nil, error);
-        } else {
-            if (source.redirect) {
-                STPRedirectContext *redirectContext = [[STPRedirectContext alloc] initWithSource:source completion:^(NSString *sourceID, NSString *clientSecret, NSError *error) {
-                    if (error) {
-                        reject(nil, nil, error);
-                    } else {
-                        [[STPAPIClient sharedClient] startPollingSourceWithId:sourceID clientSecret:clientSecret timeout:10 completion:^(STPSource *source, NSError *error) {
-                            if (error) {
-                                reject(nil, nil, error);
-                            } else {
-                                switch (source.status) {
-                                    case STPSourceStatusChargeable:
-                                    case STPSourceStatusConsumed:
-                                        resolve([self convertSourceObject:source]);
-                                        break;
-                                    case STPSourceStatusCanceled:
-                                        reject(
-                                            [NSString stringWithFormat:@"%ld", (long)3],
-                                            @"User cancelled source redirect",
-                                            [[NSError alloc] initWithDomain:@"StripeNative" code:3 userInfo:@{NSLocalizedDescriptionKey:@"User cancelled source redirect"}]
-                                        );
-                                        break;
-                                    case STPSourceStatusPending:
-                                    case STPSourceStatusFailed:
-                                    case STPSourceStatusUnknown:
-                                        reject(
-                                            [NSString stringWithFormat:@"%ld", (long)3],
-                                            @"Source redirect failed",
-                                            [[NSError alloc] initWithDomain:@"StripeNative" code:3 userInfo:@{NSLocalizedDescriptionKey:@"Source redirect failed"}]
-                                        );
-                                        break;
-                                }
-                            }
-                        }];
-                    }
-                }];
-                [redirectContext startSafariAppRedirectFlow];
-            } else {
-                resolve([self convertSourceObject:source]);
-            }
-        }
-    }];
-}
-
-RCT_EXPORT_METHOD(paymentRequestWithCardForm:(NSDictionary *)options
-                                    resolver:(RCTPromiseResolveBlock)resolve
-                                    rejecter:(RCTPromiseRejectBlock)reject) {
     if(!requestIsCompleted) {
         NSError *error = [TPSError previousRequestNotCompletedError];
         reject([NSString stringWithFormat:@"%ld", error.code], error.localizedDescription, error);
         return;
     }
-
+    
     requestIsCompleted = NO;
     // Save promise handlers to use in `paymentAuthorizationViewController`
     promiseResolver = resolve;
     promiseRejector = reject;
-
+    
     NSUInteger requiredBillingAddressFields = [self billingType:options[@"requiredBillingAddressFields"]];
     NSString *companyName = options[@"companyName"] ? options[@"companyName"] : @"";
+    BOOL smsAutofillDisabled = [options[@"smsAutofillDisabled"] boolValue];
     STPUserInformation *prefilledInformation = [self userInformation:options[@"prefilledInformation"]];
     NSString *managedAccountCurrency = options[@"managedAccountCurrency"];
     NSString *nextPublishableKey = options[@"publishableKey"] ? options[@"publishableKey"] : publishableKey;
     UIModalPresentationStyle formPresentation = [self formPresentation:options[@"presentation"]];
     STPTheme *theme = [self formTheme:options[@"theme"]];
-
+    
     STPPaymentConfiguration *configuration = [[STPPaymentConfiguration alloc] init];
     [configuration setRequiredBillingAddressFields:requiredBillingAddressFields];
     [configuration setCompanyName:companyName];
+    [configuration setSmsAutofillDisabled:smsAutofillDisabled];
     [configuration setPublishableKey:nextPublishableKey];
-
-
+    
+    
     STPAddCardViewController *addCardViewController = [[STPAddCardViewController alloc] initWithConfiguration:configuration theme:theme];
     [addCardViewController setDelegate:self];
     [addCardViewController setPrefilledInformation:prefilledInformation];
@@ -362,29 +277,30 @@ RCT_EXPORT_METHOD(paymentRequestWithCardForm:(NSDictionary *)options
 }
 
 RCT_EXPORT_METHOD(paymentRequestWithApplePay:(NSArray *)items
-                                 withOptions:(NSDictionary *)options
-                                    resolver:(RCTPromiseResolveBlock)resolve
-                                    rejecter:(RCTPromiseRejectBlock)reject) {
+                  withOptions:(NSDictionary *)options
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject) {
     if(!requestIsCompleted) {
         NSError *error = [TPSError previousRequestNotCompletedError];
         reject([NSString stringWithFormat:@"%ld", error.code], error.localizedDescription, error);
         return;
     }
-
+    
     requestIsCompleted = NO;
     // Save promise handlers to use in `paymentAuthorizationViewController`
     promiseResolver = resolve;
     promiseRejector = reject;
-
+    
     NSUInteger requiredShippingAddressFields = [self applePayAddressFields:options[@"requiredShippingAddressFields"]];
     NSUInteger requiredBillingAddressFields = [self applePayAddressFields:options[@"requiredBillingAddressFields"]];
     PKShippingType shippingType = [self applePayShippingType:options[@"shippingType"]];
     NSMutableArray *shippingMethodsItems = options[@"shippingMethods"] ? options[@"shippingMethods"] : [NSMutableArray array];
+    NSMutableArray *countries = options[@"countries"] ? options[@"countries"] : [NSMutableArray array];
+    countriesApplepay = countries;
     NSString* currencyCode = options[@"currencyCode"] ? options[@"currencyCode"] : @"USD";
-    NSString* countryCode = options[@"countryCode"] ? options[@"currencyCode"] : @"US";
-
+    
     NSMutableArray *shippingMethods = [NSMutableArray array];
-
+    
     for (NSDictionary *item in shippingMethodsItems) {
         PKShippingMethod *shippingItem = [[PKShippingMethod alloc] init];
         shippingItem.label = item[@"label"];
@@ -393,31 +309,37 @@ RCT_EXPORT_METHOD(paymentRequestWithApplePay:(NSArray *)items
         shippingItem.identifier = item[@"id"];
         [shippingMethods addObject:shippingItem];
     }
-
+    
     NSMutableArray *summaryItems = [NSMutableArray array];
-
+    
     for (NSDictionary *item in items) {
         PKPaymentSummaryItem *summaryItem = [[PKPaymentSummaryItem alloc] init];
         summaryItem.label = item[@"label"];
         summaryItem.amount = [NSDecimalNumber decimalNumberWithString:item[@"amount"]];
         [summaryItems addObject:summaryItem];
     }
-
-    PKPaymentRequest *paymentRequest = [Stripe paymentRequestWithMerchantIdentifier:merchantId country:countryCode currency:currencyCode];
-
+    
+    summaryItemsApplePay = summaryItems;
+    PKPaymentRequest *paymentRequest = [Stripe paymentRequestWithMerchantIdentifier:merchantId];
+    
     [paymentRequest setRequiredShippingAddressFields:requiredShippingAddressFields];
     [paymentRequest setRequiredBillingAddressFields:requiredBillingAddressFields];
     [paymentRequest setPaymentSummaryItems:summaryItems];
     [paymentRequest setShippingMethods:shippingMethods];
     [paymentRequest setShippingType:shippingType];
-
+    [paymentRequest setCurrencyCode:currencyCode];
+    
+    //    [paymentRequest setSupportedCountries:(NSSet<NSString *> * _Nullable)];
+    
+    //http://nshipster.com/apple-pay/
     if ([Stripe canSubmitPaymentRequest:paymentRequest]) {
         PKPaymentAuthorizationViewController *paymentAuthorizationVC = [[PKPaymentAuthorizationViewController alloc] initWithPaymentRequest:paymentRequest];
         paymentAuthorizationVC.delegate = self;
         [RCTPresentedViewController() presentViewController:paymentAuthorizationVC animated:YES completion:nil];
     } else {
         // There is a problem with your Apple Pay configuration.
-        [self resetPromiseCallbacks];
+        promiseRejector = nil;
+        promiseResolver = nil;
         requestIsCompleted = YES;
         
         NSError *error = [TPSError applePayNotConfiguredError];
@@ -427,140 +349,288 @@ RCT_EXPORT_METHOD(paymentRequestWithApplePay:(NSArray *)items
 
 RCT_EXPORT_METHOD(openApplePaySetup) {
     PKPassLibrary *library = [[PKPassLibrary alloc] init];
-
+    
     // Here we should check, if openPaymentSetup selector exist
     if ([library respondsToSelector:NSSelectorFromString(@"openPaymentSetup")]) {
         [library openPaymentSetup];
     }
 }
 
-#pragma mark - Private
-
-- (void)resolvePromise:(id)result {
-    if (promiseResolver) {
-        promiseResolver(result);
-    }
-    [self resetPromiseCallbacks];
-}
-
-- (void)rejectPromiseWithError:(NSError *)error {
-    [self rejectPromiseWithCode:[NSString stringWithFormat:@"%ld", error.code]
-                        message:error.localizedDescription
-                          error:error];
-}
-
-- (void)rejectPromiseWithCode:(NSString *)code message:(NSString *)message error:(NSError *)error {
-    if (promiseRejector) {
-        promiseRejector(code, message, error);
-    }
-    [self resetPromiseCallbacks];
-}
-
-- (void)resetPromiseCallbacks {
-    promiseResolver = nil;
-    promiseRejector = nil;
-}
-
-- (void)resolveApplePayCompletion:(PKPaymentAuthorizationStatus)status {
-    if (applePayCompletion) {
-        applePayCompletion(status);
-    }
-    [self resetApplePayCallback];
-}
-
-- (void)resetApplePayCallback {
-    applePayCompletion = nil;
-}
-
-#pragma mark - STPAddCardViewControllerDelegate
+#pragma mark STPAddCardViewControllerDelegate
 
 - (void)addCardViewController:(STPAddCardViewController *)controller
                didCreateToken:(STPToken *)token
                    completion:(STPErrorBlock)completion {
     [RCTPresentedViewController() dismissViewControllerAnimated:YES completion:nil];
-
+    
     requestIsCompleted = YES;
     completion(nil);
-    [self resolvePromise:[self convertTokenObject:token]];
+    promiseResolver([self convertTokenObject:token]);
 }
 
 - (void)addCardViewControllerDidCancel:(STPAddCardViewController *)addCardViewController {
     [RCTPresentedViewController() dismissViewControllerAnimated:YES completion:nil];
-
+    
     if (!requestIsCompleted) {
         requestIsCompleted = YES;
-        [self rejectPromiseWithError:[TPSError userCancelError]];
+        NSError *error = [TPSError userCancelError];
+        promiseRejector([NSString stringWithFormat:@"%ld", error.code], error.localizedDescription, error);
     }
-
+    
 }
 
+#pragma mark Beta TopNine
+
+RCT_EXPORT_METHOD(updateApplePayShippingMethod:(NSArray *)shippingMethodsItems
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject) {
+    
+    NSMutableArray *shippingMethods = [NSMutableArray array];
+    for (NSDictionary *item in shippingMethodsItems) {
+        PKShippingMethod *shippingItem = [[PKShippingMethod alloc] init];
+        shippingItem.label = item[@"label"];
+        shippingItem.detail = item[@"detail"];
+        shippingItem.amount = [NSDecimalNumber decimalNumberWithString:item[@"amount"]];
+        shippingItem.identifier = item[@"id"];
+        [shippingMethods addObject:shippingItem];
+    }
+    
+    NSMutableArray<PKPaymentSummaryItem *> *summaryItems = summaryItemsApplePay;
+    if ([summaryItems count] > 1 ) {
+        summaryItems = [[NSMutableArray alloc] initWithObjects:summaryItems[0], nil];
+    }
+    PKShippingMethod *shippingItem = shippingMethods[0];
+    
+    PKPaymentSummaryItem *summaryItem = [[PKPaymentSummaryItem alloc] init];
+    summaryItem.label = @"Shipping Costs";
+    summaryItem.amount = shippingItem.amount;
+    [summaryItems addObject:summaryItem];
+    
+    PKPaymentSummaryItem *summaryItemTotal = [[PKPaymentSummaryItem alloc] init];
+    summaryItemTotal.label = @"Total";
+    summaryItemTotal.amount = [shippingItem.amount decimalNumberByAdding:summaryItemsApplePay[0].amount];
+    [summaryItems addObject:summaryItemTotal];
+    
+    PKPaymentRequestShippingContactUpdate *shippingContactUpdate = [[PKPaymentRequestShippingContactUpdate alloc] initWithErrors:nil paymentSummaryItems:summaryItems shippingMethods:shippingMethods];
+    if (shippingContactUpdateCompletion != nil) {
+        shippingContactUpdateCompletion(shippingContactUpdate);
+    } else if ( shippingContactUpdateCompletionDeprecate != nil) {
+        shippingContactUpdateCompletionDeprecate(PKPaymentAuthorizationStatusSuccess,shippingMethods, summaryItems);
+    }
+}
+
+
 #pragma mark PKPaymentAuthorizationViewControllerDelegate
+
+- (void)paymentAuthorizationViewController:(PKPaymentAuthorizationViewController *)controller
+                  didSelectShippingContact:(PKContact *)contact
+                                completion:(void (^)(PKPaymentAuthorizationStatus status, NSArray<PKShippingMethod *> *shippingMethods,
+                                                     NSArray<PKPaymentSummaryItem *> *summaryItems))completion API_DEPRECATED("Use paymentAuthorizationViewController:didSelectShippingContact:handler: instead to provide more granular errors", ios(8.0, 11.0)) {
+    
+    NSLog(@"paymentAuthorizationViewController");
+    NSString *countryCode = contact.postalAddress.ISOCountryCode;
+    NSString *countryName = contact.postalAddress.country;
+    NSString *stateCode = contact.postalAddress.state;
+    NSPredicate *countryCodePredicate = [NSPredicate predicateWithFormat: @" %K ==[c] %@", @"code", countryCode];
+    NSPredicate *countryNamePredicate = [NSPredicate predicateWithFormat: @" %K ==[c] %@", @"name", countryName];
+    NSArray *filteredCountry = [countriesApplepay filteredArrayUsingPredicate:countryCodePredicate];
+    NSArray *filteredCountryByName = [countriesApplepay filteredArrayUsingPredicate:countryNamePredicate];
+    if ((filteredCountry && [filteredCountry count] > 0) || (filteredCountryByName && [filteredCountryByName count] > 0 )) {
+        NSString *countryCodeServer = countryCode;
+        NSDictionary *country = nil;
+        if (filteredCountryByName && [filteredCountryByName count] > 0) {
+            countryCodeServer = [filteredCountryByName[0] valueForKey:@"code"];
+            country = filteredCountryByName[0];
+        } else {
+            country = filteredCountry[0];
+        }
+        
+        NSDictionary *states = [country valueForKey:@"states"];
+        NSDictionary *stateByCode = [states valueForKey:stateCode];
+        NSArray * statesValues = [states allValues];
+        
+        NSPredicate *statePredicateName = [NSPredicate predicateWithFormat: @"%K ==[c] %@", @"name", stateCode];
+        NSArray *filteredStateByName = [statesValues filteredArrayUsingPredicate:statePredicateName];
+        
+        if ((stateByCode && [stateByCode allValues] > 0) || (filteredStateByName && [filteredStateByName count] > 0)) {
+            NSString *stateCodeServer = stateCode;
+            if (filteredStateByName && [filteredStateByName count] > 0) {
+                stateCodeServer = [filteredStateByName[0] valueForKey:@"code"];
+            }
+            shippingContactUpdateCompletionDeprecate = completion;
+            [TPSUpdateShippingCosts fetchShippingCosts:countryCodeServer stateCode:stateCodeServer];
+        } else {
+            completion(PKPaymentAuthorizationStatusInvalidShippingPostalAddress, nil, nil);
+        }
+    } else {
+        completion(PKPaymentAuthorizationStatusInvalidShippingPostalAddress, nil, nil);
+    }
+}
+
+- (void)paymentAuthorizationViewController:(PKPaymentAuthorizationViewController *)controller
+                  didSelectShippingContact:(PKContact *)contact
+                                   handler:(void (^)(PKPaymentRequestShippingContactUpdate *update))completion
+API_AVAILABLE(ios(11.0), watchos(4.0)) {
+    NSLog(@"paymentAuthorizationViewController");
+    NSString *countryCode = contact.postalAddress.ISOCountryCode;
+    NSString *countryName = contact.postalAddress.country;
+    NSString *stateCode = contact.postalAddress.state;
+    NSPredicate *countryCodePredicate = [NSPredicate predicateWithFormat: @"%K ==[c] %@", @"code", countryCode];
+    NSPredicate *countryNamePredicate = [NSPredicate predicateWithFormat: @"%K ==[c] %@", @"name", countryName];
+    NSArray *filteredCountry = [countriesApplepay filteredArrayUsingPredicate:countryCodePredicate];
+    NSArray *filteredCountryByName = [countriesApplepay filteredArrayUsingPredicate:countryNamePredicate];
+    // Validate Shipping Adress first
+    if ((filteredCountry && [filteredCountry count] > 0) || (filteredCountryByName && [filteredCountryByName count] > 0 )) {
+        NSString *countryCodeServer = countryCode;
+        NSDictionary *country = nil;
+        if (filteredCountryByName && [filteredCountryByName count] > 0) {
+            countryCodeServer = [filteredCountryByName[0] valueForKey:@"code"];
+            country = filteredCountryByName[0];
+        } else {
+            country = filteredCountry[0];
+        }
+        
+        NSDictionary *states = [country valueForKey:@"states"];
+        NSDictionary *stateByCode = [states valueForKey:stateCode];
+        NSArray * statesValues = [states allValues];
+        
+        NSPredicate *statePredicateName = [NSPredicate predicateWithFormat: @"%K ==[c] %@", @"name", stateCode];
+        NSArray *filteredStateByName = [statesValues filteredArrayUsingPredicate:statePredicateName];
+        
+        if ((stateByCode && [stateByCode allValues] > 0) || (filteredStateByName && [filteredStateByName count] > 0)) {
+            NSString *stateCodeServer = stateCode;
+            if (filteredStateByName && [filteredStateByName count] > 0) {
+                stateCodeServer = [filteredStateByName[0] valueForKey:@"code"];
+            }
+            shippingContactUpdateCompletion = completion;
+            [TPSUpdateShippingCosts fetchShippingCosts:countryCodeServer stateCode:stateCodeServer];
+        } else {
+            NSError *stateCodeError = [[NSError alloc] initWithDomain:PKPaymentErrorDomain
+                                                                 code:PKPaymentShippingContactInvalidError
+                                                             userInfo:@{NSLocalizedDescriptionKey: @"State is invalid",
+                                                                        PKPaymentErrorContactFieldUserInfoKey: PKContactFieldPostalAddress,
+                                                                        PKPaymentErrorPostalAddressUserInfoKey:CNPostalAddressStateKey}];
+            PKPaymentRequestShippingContactUpdate *shippingContactUpdate = [[PKPaymentRequestShippingContactUpdate alloc] initWithErrors:@[stateCodeError] paymentSummaryItems:nil shippingMethods:nil];
+            return completion(shippingContactUpdate);
+        }
+    } else {
+        NSError *stateCodeError = [[NSError alloc] initWithDomain:PKPaymentErrorDomain
+                                                             code:PKPaymentShippingContactInvalidError
+                                                         userInfo:@{NSLocalizedDescriptionKey: @"Country is invalid",
+                                                                    PKPaymentErrorContactFieldUserInfoKey: PKContactFieldPostalAddress,
+                                                                    PKPaymentErrorPostalAddressUserInfoKey:CNPostalAddressCountryKey}];
+        PKPaymentRequestShippingContactUpdate *shippingContactUpdate = [[PKPaymentRequestShippingContactUpdate alloc] initWithErrors:@[stateCodeError] paymentSummaryItems:nil shippingMethods:nil];
+        return completion(shippingContactUpdate);
+    }
+    
+}
+
+- (void)paymentAuthorizationViewController:(PKPaymentAuthorizationViewController *)controller
+                   didSelectShippingMethod:(PKShippingMethod *)shippingMethod
+                                completion:(void (^)(PKPaymentAuthorizationStatus status, NSArray<PKPaymentSummaryItem *> *summaryItems))completion API_DEPRECATED("Use paymentAuthorizationViewController:didSelectShippingMethod:handler: instead to provide more granular errors", ios(8.0, 11.0)) {
+    NSMutableArray<PKPaymentSummaryItem *> *summaryItems = summaryItemsApplePay;
+    if ([summaryItems count] > 1 ) {
+        summaryItems = [[NSMutableArray alloc] initWithObjects:summaryItems[0], nil];
+    }
+    
+    PKPaymentSummaryItem *summaryItem = [[PKPaymentSummaryItem alloc] init];
+    summaryItem.label = @"Shipping Costs";
+    summaryItem.amount = shippingMethod.amount;
+    [summaryItems addObject:summaryItem];
+    
+    PKPaymentSummaryItem *summaryItemTotal = [[PKPaymentSummaryItem alloc] init];
+    summaryItemTotal.label = @"Total";
+    summaryItemTotal.amount = [shippingMethod.amount decimalNumberByAdding:summaryItems[0].amount];
+    [summaryItems addObject:summaryItemTotal];
+    
+    completion(PKPaymentAuthorizationStatusSuccess, summaryItems);
+    
+}
+
+- (void)paymentAuthorizationViewController:(PKPaymentAuthorizationViewController *)controller
+                   didSelectShippingMethod:(PKShippingMethod *)shippingMethod
+                                   handler:(void (^)(PKPaymentRequestShippingMethodUpdate *update))completion API_AVAILABLE(ios(11.0), watchos(4.0)) {
+    NSMutableArray<PKPaymentSummaryItem *> *summaryItems = summaryItemsApplePay;
+    if ([summaryItems count] > 1 ) {
+        summaryItems = [[NSMutableArray alloc] initWithObjects:summaryItems[0], nil];
+    }
+    
+    PKPaymentSummaryItem *summaryItem = [[PKPaymentSummaryItem alloc] init];
+    summaryItem.label = @"Shipping Costs";
+    summaryItem.amount = shippingMethod.amount;
+    [summaryItems addObject:summaryItem];
+    
+    PKPaymentSummaryItem *summaryItemTotal = [[PKPaymentSummaryItem alloc] init];
+    summaryItemTotal.label = @"Total";
+    summaryItemTotal.amount = [shippingMethod.amount decimalNumberByAdding:summaryItems[0].amount];
+    [summaryItems addObject:summaryItemTotal];
+    
+    PKPaymentRequestShippingMethodUpdate *shippingContactUpdate = [[PKPaymentRequestShippingMethodUpdate alloc] initWithPaymentSummaryItems:summaryItems];
+    
+    completion(shippingContactUpdate);
+    
+}
+
+
+//
+
 
 - (void)paymentAuthorizationViewController:(PKPaymentAuthorizationViewController *)controller
                        didAuthorizePayment:(PKPayment *)payment
                                 completion:(void (^)(PKPaymentAuthorizationStatus))completion {
     // Save for deffered call
     applePayCompletion = completion;
-
+    
     [[STPAPIClient sharedClient] createTokenWithPayment:payment completion:^(STPToken * _Nullable token, NSError * _Nullable error) {
         requestIsCompleted = YES;
-
+        
         if (error) {
-            // Save for deffered use
-            applePayStripeError = error;
-            [self resolveApplePayCompletion:PKPaymentAuthorizationStatusFailure];
+            completion(PKPaymentAuthorizationStatusFailure);
+            promiseRejector(nil, nil, error);
         } else {
             NSDictionary *result = [self convertTokenObject:token];
             NSDictionary *extra = @{
-                @"billingContact": [self contactDetails:payment.billingContact] ?: [NSNull null],
-                @"shippingContact": [self contactDetails:payment.shippingContact] ?: [NSNull null],
-                @"shippingMethod": [self shippingDetails:payment.shippingMethod] ?: [NSNull null]
-            };
-
+                                    @"billingContact": [self contactDetails:payment.billingContact] ?: [NSNull null],
+                                    @"shippingContact": [self contactDetails:payment.shippingContact] ?: [NSNull null],
+                                    @"shippingMethod": [self shippingDetails:payment.shippingMethod] ?: [NSNull null]
+                                    };
+            
             [result setValue:extra forKey:@"extra"];
-
-            [self resolvePromise:result];
+            
+            promiseResolver(result);
         }
     }];
 }
 
 
 - (void)paymentAuthorizationViewControllerDidFinish:(PKPaymentAuthorizationViewController *)controller {
-    [self resetApplePayCallback];
-
-    void(^completion)() = ^{
-        if (!requestIsCompleted) {
-            requestIsCompleted = YES;
-            
-            [self rejectPromiseWithError:[TPSError userCancelError]];
-        } else {
-            if (applePayStripeError) {
-                [self rejectPromiseWithCode:nil message:nil error:applePayStripeError];
-                applePayStripeError = nil;
-            } else {
-                [self resolvePromise:nil];
-            }
-        }
-    };
+    [RCTPresentedViewController() dismissViewControllerAnimated:YES completion:nil];
     
-    [RCTPresentedViewController() dismissViewControllerAnimated:YES completion:completion];
+    if (!requestIsCompleted) {
+        requestIsCompleted = YES;
+        
+        NSError *error = [TPSError userCancelError];
+        promiseRejector([NSString stringWithFormat:@"%ld", error.code], error.localizedDescription, error);
+    } else {
+        promiseResolver(nil);
+    }
 }
 
 - (NSDictionary *)convertTokenObject:(STPToken*)token {
     NSMutableDictionary *result = [@{} mutableCopy];
-
+    
     // Token
     [result setValue:token.tokenId forKey:@"tokenId"];
     [result setValue:@([token.created timeIntervalSince1970]) forKey:@"created"];
     [result setValue:@(token.livemode) forKey:@"livemode"];
-
+    
     // Card
     if (token.card) {
         NSMutableDictionary *card = [@{} mutableCopy];
         [result setValue:card forKey:@"card"];
-
+        
         [card setValue:token.card.cardId forKey:@"cardId"];
-
+        
         [card setValue:[self cardBrand:token.card.brand] forKey:@"brand"];
         [card setValue:[self cardFunding:token.card.funding] forKey:@"funding"];
         [card setValue:token.card.last4 forKey:@"last4"];
@@ -570,7 +640,7 @@ RCT_EXPORT_METHOD(openApplePaySetup) {
         [card setValue:@(token.card.expYear) forKey:@"expYear"];
         [card setValue:token.card.country forKey:@"country"];
         [card setValue:token.card.currency forKey:@"currency"];
-
+        
         [card setValue:token.card.name forKey:@"name"];
         [card setValue:token.card.addressLine1 forKey:@"addressLine1"];
         [card setValue:token.card.addressLine2 forKey:@"addressLine2"];
@@ -579,12 +649,12 @@ RCT_EXPORT_METHOD(openApplePaySetup) {
         [card setValue:token.card.addressCountry forKey:@"addressCountry"];
         [card setValue:token.card.addressZip forKey:@"addressZip"];
     }
-
+    
     // Bank Account
     if (token.bankAccount) {
         NSMutableDictionary *bankAccount = [@{} mutableCopy];
         [result setValue:bankAccount forKey:@"bankAccount"];
-
+        
         NSString *bankAccountStatusString =
         [RCTConvert STPBankAccountStatusString:token.bankAccount.status];
         [bankAccount setValue:bankAccountStatusString forKey:@"status"];
@@ -598,120 +668,7 @@ RCT_EXPORT_METHOD(openApplePaySetup) {
         [RCTConvert STPBankAccountHolderTypeString:token.bankAccount.accountHolderType];
         [bankAccount setValue:bankAccountHolderTypeString forKey:@"accountHolderType"];
     }
-
-    return result;
-}
-
-- (NSDictionary *)convertSourceObject:(STPSource*)source {
-    NSMutableDictionary *result = [@{} mutableCopy];
-
-    // Source
-    [result setValue:source.clientSecret forKey:@"clientSecret"];
-    [result setValue:@([source.created timeIntervalSince1970]) forKey:@"created"];
-    [result setValue:source.currency forKey:@"currency"];
-    [result setValue:@(source.livemode) forKey:@"livemode"];
-    [result setValue:source.amount forKey:@"amount"];
-
-    // Flow
-    [result setValue:[self sourceFlow:source.flow] forKey:@"flow"];
-
-    // Metadata
-    if (source.metadata) {
-        [result setValue:source.metadata forKey:@"metadata"];
-    }
-
-    // Owner
-    if (source.owner) {
-        NSMutableDictionary *owner = [@{} mutableCopy];
-        [result setValue:owner forKey:@"owner"];
-
-        if (source.owner.address) {
-            [owner setValue:[self address:source.owner.address] forKey:@"address"];
-        }
-        [owner setValue:source.owner.email forKey:@"email"];
-        [owner setValue:source.owner.name forKey:@"name"];
-        [owner setValue:source.owner.phone forKey:@"phone"];
-        if (source.owner.verifiedAddress) {
-            [owner setValue:[self address:source.owner.verifiedAddress] forKey:@"verifiedAddress"];
-        }
-        [owner setValue:source.owner.verifiedEmail forKey:@"verifiedEmail"];
-        [owner setValue:source.owner.verifiedName forKey:@"verifiedName"];
-        [owner setValue:source.owner.verifiedPhone forKey:@"verifiedPhone"];
-    }
-
-    // Details
-    if (source.details) {
-        [result setValue:source.details forKey:@"details"];
-    }
-
-    // Receiver
-    if (source.receiver) {
-        NSMutableDictionary *receiver = [@{} mutableCopy];
-        [result setValue:receiver forKey:@"receiver"];
-
-        [receiver setValue:source.receiver.address forKey:@"address"];
-        [receiver setValue:source.receiver.amountCharged forKey:@"amountCharged"];
-        [receiver setValue:source.receiver.amountReceived forKey:@"amountReceived"];
-        [receiver setValue:source.receiver.amountReturned forKey:@"amountReturned"];
-    }
-
-    // Redirect
-    if (source.redirect) {
-        NSMutableDictionary *redirect = [@{} mutableCopy];
-        [result setValue:redirect forKey:@"redirect"];
-        NSString *returnURL = source.redirect.returnURL.absoluteString;
-        [redirect setValue:returnURL forKey:@"returnURL"];
-        NSString *url = source.redirect.url.absoluteString;
-        [redirect setValue:url forKey:@"url"];
-        [redirect setValue:[self sourceRedirectStatus:source.redirect.status] forKey:@"status"];
-    }
-
-    // Verification
-    if (source.verification) {
-        NSMutableDictionary *verification = [@{} mutableCopy];
-        [result setValue:verification forKey:@"verification"];
-
-        [verification setValue:source.verification.attemptsRemaining forKey:@"attemptsRemaining"];
-        [verification setValue:[self sourceVerificationStatus:source.verification.status] forKey:@"status"];
-    }
-
-    // Status
-    [result setValue:[self sourceStatus:source.status] forKey:@"status"];
-
-    // Type
-    [result setValue:[self sourceType:source.type] forKey:@"type"];
-
-    // Usage
-    [result setValue:[self sourceUsage:source.usage] forKey:@"usage"];
-
-    // CardDetails
-    if (source.cardDetails) {
-        NSMutableDictionary *cardDetails = [@{} mutableCopy];
-        [result setValue:cardDetails forKey:@"cardDetails"];
-
-        [cardDetails setValue:source.cardDetails.last4 forKey:@"last4"];
-        [cardDetails setValue:@(source.cardDetails.expMonth) forKey:@"expMonth"];
-        [cardDetails setValue:@(source.cardDetails.expYear) forKey:@"expYear"];
-        [cardDetails setValue:[self cardBrand:source.cardDetails.brand] forKey:@"brand"];
-        [cardDetails setValue:[self cardFunding:source.cardDetails.funding] forKey:@"funding"];
-        [cardDetails setValue:source.cardDetails.country forKey:@"country"];
-        [cardDetails setValue:[self card3DSecureStatus:source.cardDetails.threeDSecure] forKey:@"threeDSecure"];
-    }
-
-    // SepaDebitDetails
-    if (source.sepaDebitDetails) {
-        NSMutableDictionary *sepaDebitDetails = [@{} mutableCopy];
-        [result setValue:sepaDebitDetails forKey:@"sepaDebitDetails"];
-
-        [sepaDebitDetails setValue:source.sepaDebitDetails.last4 forKey:@"last4"];
-        [sepaDebitDetails setValue:source.sepaDebitDetails.bankCode forKey:@"bankCode"];
-        [sepaDebitDetails setValue:source.sepaDebitDetails.country forKey:@"country"];
-        [sepaDebitDetails setValue:source.sepaDebitDetails.fingerprint forKey:@"fingerprint"];
-        [sepaDebitDetails setValue:source.sepaDebitDetails.mandateReference forKey:@"mandateReference"];
-        NSString *mandateURL = source.sepaDebitDetails.mandateURL.absoluteString;
-        [sepaDebitDetails setValue:mandateURL forKey:@"mandateURL"];
-    }
-
+    
     return result;
 }
 
@@ -749,137 +706,25 @@ RCT_EXPORT_METHOD(openApplePaySetup) {
     }
 }
 
-- (NSString *)card3DSecureStatus:(STPSourceCard3DSecureStatus)inputStatus {
-    switch (inputStatus) {
-        case STPSourceCard3DSecureStatusRequired:
-            return @"required";
-        case STPSourceCard3DSecureStatusOptional:
-            return @"optional";
-        case STPSourceCard3DSecureStatusNotSupported:
-            return @"notSupported";
-        case STPSourceCard3DSecureStatusUnknown:
-        default:
-            return @"unknown";
-    }
-}
-
-- (NSString *)sourceFlow:(STPSourceFlow)inputFlow {
-    switch (inputFlow) {
-        case STPSourceFlowNone:
-            return @"none";
-        case STPSourceFlowRedirect:
-            return @"redirect";
-        case STPSourceFlowCodeVerification:
-            return @"codeVerification";
-        case STPSourceFlowReceiver:
-            return @"receiver";
-        case STPSourceFlowUnknown:
-        default:
-            return @"unknown";
-    }
-}
-
-- (NSString *)sourceRedirectStatus:(STPSourceRedirectStatus)inputStatus {
-    switch (inputStatus) {
-        case STPSourceRedirectStatusPending:
-            return @"pending";
-        case STPSourceRedirectStatusSucceeded:
-            return @"succeeded";
-        case STPSourceRedirectStatusFailed:
-            return @"failed";
-        case STPSourceRedirectStatusUnknown:
-        default:
-            return @"unknown";
-    }
-}
-
-- (NSString *)sourceVerificationStatus:(STPSourceVerificationStatus)inputStatus {
-    switch (inputStatus) {
-        case STPSourceVerificationStatusPending:
-            return @"pending";
-        case STPSourceVerificationStatusSucceeded:
-            return @"succeeded";
-        case STPSourceVerificationStatusFailed:
-            return @"failed";
-        case STPSourceVerificationStatusUnknown:
-        default:
-            return @"unknown";
-    }
-}
-
-- (NSString *)sourceStatus:(STPSourceStatus)inputStatus {
-    switch (inputStatus) {
-        case STPSourceStatusPending:
-            return @"pending";
-        case STPSourceStatusChargeable:
-            return @"chargable";
-        case STPSourceStatusConsumed:
-            return @"consumed";
-        case STPSourceStatusCanceled:
-            return @"canceled";
-        case STPSourceStatusFailed:
-            return @"failed";
-        case STPSourceStatusUnknown:
-        default:
-            return @"unknown";
-    }
-}
-
-- (NSString *)sourceType:(STPSourceType)inputType {
-    switch (inputType) {
-        case STPSourceTypeBancontact:
-            return @"bancontact";
-        case STPSourceTypeBitcoin:
-            return @"bitcoin";
-        case STPSourceTypeGiropay:
-            return @"giropay";
-        case STPSourceTypeIDEAL:
-            return @"ideal";
-        case STPSourceTypeSEPADebit:
-            return @"sepaDebit";
-        case STPSourceTypeSofort:
-            return @"sofort";
-        case STPSourceTypeThreeDSecure:
-            return @"threeDSecure";
-        case STPSourceTypeAlipay:
-            return @"alipay";
-        case STPSourceTypeUnknown:
-        default:
-            return @"unknown";
-    }
-}
-
-- (NSString *)sourceUsage:(STPSourceUsage)inputUsage {
-    switch (inputUsage) {
-        case STPSourceUsageReusable:
-            return @"reusable";
-        case STPSourceUsageSingleUse:
-            return @"singleUse";
-        case STPSourceUsageUnknown:
-        default:
-            return @"unknown";
-    }
-}
-
 - (NSDictionary *)contactDetails:(PKContact*)inputContact {
     NSMutableDictionary *contactDetails = [[NSMutableDictionary alloc] init];
-
+    
     if (inputContact.name) {
         [contactDetails setValue:[NSPersonNameComponentsFormatter localizedStringFromPersonNameComponents:inputContact.name style:NSPersonNameComponentsFormatterStyleDefault options:0] forKey:@"name"];
     }
-
+    
     if (inputContact.phoneNumber) {
         [contactDetails setValue:[inputContact.phoneNumber stringValue] forKey:@"phoneNumber"];
     }
-
+    
     if (inputContact.emailAddress) {
         [contactDetails setValue:inputContact.emailAddress forKey:@"emailAddress"];
     }
-
+    
     if (inputContact.supplementarySubLocality) {
         [contactDetails setValue:inputContact.supplementarySubLocality forKey:@"supplementarySubLocality"];
     }
-
+    
     for (NSString *elem in @[@"street", @"city", @"state", @"country", @"ISOCountryCode", @"postalCode"]) {
         if ([inputContact.postalAddress respondsToSelector:NSSelectorFromString(elem)]) {
             [contactDetails setValue:[inputContact.postalAddress valueForKey:elem] forKey:elem];
@@ -888,43 +733,43 @@ RCT_EXPORT_METHOD(openApplePaySetup) {
     if ([contactDetails count] == 0) {
         return nil;
     }
-
+    
     return contactDetails;
 }
 
 - (NSDictionary *)shippingDetails:(PKShippingMethod*)inputShipping {
     NSMutableDictionary *shippingDetails = [[NSMutableDictionary alloc] init];
-
+    
     if (inputShipping.label) {
         [shippingDetails setValue:inputShipping.label forKey:@"label"];
     }
-
+    
     if (inputShipping.amount) {
         [shippingDetails setValue:[[self numberFormatter] stringFromNumber: inputShipping.amount] forKey:@"amount"];
     }
-
+    
     if (inputShipping.detail) {
         [shippingDetails setValue:inputShipping.detail forKey:@"detail"];
     }
-
+    
     if (inputShipping.identifier) {
         [shippingDetails setValue:inputShipping.identifier forKey:@"id"];
     }
-
+    
     if ([shippingDetails count] == 0) {
         return nil;
     }
-
+    
     return shippingDetails;
 }
 
 - (PKAddressField)applePayAddressFields:(NSArray <NSString *> *)addressFieldStrings {
     PKAddressField addressField = PKAddressFieldNone;
-
+    
     for (NSString *addressFieldString in addressFieldStrings) {
         addressField |= [self applePayAddressField:addressFieldString];
     }
-
+    
     return addressField;
 }
 
@@ -959,7 +804,7 @@ RCT_EXPORT_METHOD(openApplePaySetup) {
     if ([inputType isEqualToString:@"service_pickup"]) {
         shippingType = PKShippingTypeServicePickup;
     }
-
+    
     return shippingType;
 }
 
@@ -975,16 +820,17 @@ RCT_EXPORT_METHOD(openApplePaySetup) {
 
 - (STPUserInformation *)userInformation:(NSDictionary*)inputInformation {
     STPUserInformation *userInformation = [[STPUserInformation alloc] init];
-
+    
+    [userInformation setEmail:inputInformation[@"email"]];
+    [userInformation setPhone:inputInformation[@"phone"]];
     [userInformation setBillingAddress: [self address:inputInformation[@"billingAddress"]]];
-    [userInformation setShippingAddress: [self address:inputInformation[@"shippingAddress"]]];
-
+    
     return userInformation;
 }
 
 - (STPAddress *)address:(NSDictionary*)inputAddress {
     STPAddress *address = [[STPAddress alloc] init];
-
+    
     [address setName:inputAddress[@"name"]];
     [address setLine1:inputAddress[@"line1"]];
     [address setLine2:inputAddress[@"line2"]];
@@ -994,13 +840,13 @@ RCT_EXPORT_METHOD(openApplePaySetup) {
     [address setCountry:inputAddress[@"country"]];
     [address setPhone:inputAddress[@"phone"]];
     [address setEmail:inputAddress[@"email"]];
-
+    
     return address;
 }
 
 - (STPTheme *)formTheme:(NSDictionary*)options {
     STPTheme *theme = [[STPTheme alloc] init];
-
+    
     [theme setPrimaryBackgroundColor:[RCTConvert UIColor:options[@"primaryBackgroundColor"]]];
     [theme setSecondaryBackgroundColor:[RCTConvert UIColor:options[@"secondaryBackgroundColor"]]];
     [theme setPrimaryForegroundColor:[RCTConvert UIColor:options[@"primaryForegroundColor"]]];
@@ -1009,7 +855,7 @@ RCT_EXPORT_METHOD(openApplePaySetup) {
     [theme setErrorColor:[RCTConvert UIColor:options[@"errorColor"]]];
     [theme setErrorColor:[RCTConvert UIColor:options[@"errorColor"]]];
     // TODO: process font vars
-
+    
     return theme;
 }
 
@@ -1018,7 +864,7 @@ RCT_EXPORT_METHOD(openApplePaySetup) {
         return UIModalPresentationPageSheet;
     if ([inputType isEqualToString:@"formSheet"])
         return UIModalPresentationFormSheet;
-
+    
     return UIModalPresentationFullScreen;
 }
 
@@ -1033,14 +879,14 @@ RCT_EXPORT_METHOD(openApplePaySetup) {
 
 - (NSArray <PKPaymentNetwork> *)paymentNetworks:(NSArray <NSString *> *)paymentNetworkStrings {
     NSMutableArray <PKPaymentNetwork> *results = [@[] mutableCopy];
-
+    
     for (NSString *paymentNetworkString in paymentNetworkStrings) {
         PKPaymentNetwork paymentNetwork = [self paymentNetwork:paymentNetworkString];
         if (paymentNetwork) {
             [results addObject:paymentNetwork];
         }
     }
-
+    
     return [results copy];
 }
 
@@ -1049,26 +895,26 @@ RCT_EXPORT_METHOD(openApplePaySetup) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         NSMutableDictionary *mutableMap = [@{} mutableCopy];
-
+        
         if ((&PKPaymentNetworkAmex) != NULL) {
             mutableMap[TPSPaymentNetworkAmex] = PKPaymentNetworkAmex;
         }
-
+        
         if ((&PKPaymentNetworkDiscover) != NULL) {
             mutableMap[TPSPaymentNetworkDiscover] = PKPaymentNetworkDiscover;
         }
-
+        
         if ((&PKPaymentNetworkMasterCard) != NULL) {
             mutableMap[TPSPaymentNetworkMasterCard] = PKPaymentNetworkMasterCard;
         }
-
+        
         if ((&PKPaymentNetworkVisa) != NULL) {
             mutableMap[TPSPaymentNetworkVisa] = PKPaymentNetworkVisa;
         }
-
+        
         paymentNetworksMap = [mutableMap copy];
     });
-
+    
     return paymentNetworksMap[paymentNetworkString];
 }
 
@@ -1080,11 +926,6 @@ RCT_EXPORT_METHOD(openApplePaySetup) {
         [kSharedFormatter setPositiveFormat:@"$0.00"];
     });
     return kSharedFormatter;
-}
-
-+ (BOOL)requiresMainQueueSetup
-{
-    return YES;
 }
 
 @end

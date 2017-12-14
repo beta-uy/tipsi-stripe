@@ -447,8 +447,14 @@ RCT_EXPORT_METHOD(updateApplePayShippingMethod:(NSArray *)shippingMethodsItems
         
         NSDictionary *states = [country valueForKey:@"states"];
         NSDictionary *stateByCode = [states valueForKey:stateCode];
-        NSArray * statesValues = [states allValues];
         
+        if ([states count] == 0) {
+            shippingContactUpdateCompletionDeprecate = completion;
+            [TPSUpdateShippingCosts fetchShippingCosts:countryCodeServer stateCode:stateCode];
+            return;
+        }
+        
+        NSArray * statesValues = [states allValues];
         NSPredicate *statePredicateName = [NSPredicate predicateWithFormat: @"%K ==[c] %@", @"name", stateCode];
         NSArray *filteredStateByName = [statesValues filteredArrayUsingPredicate:statePredicateName];
         
@@ -492,8 +498,14 @@ API_AVAILABLE(ios(11.0), watchos(4.0)) {
         
         NSDictionary *states = [country valueForKey:@"states"];
         NSDictionary *stateByCode = [states valueForKey:stateCode];
-        NSArray * statesValues = [states allValues];
         
+        if ([states count] == 0) {
+            shippingContactUpdateCompletion = completion;
+            [TPSUpdateShippingCosts fetchShippingCosts:countryCodeServer stateCode:stateCode];
+            return;
+        }
+        
+        NSArray * statesValues = [states allValues];
         NSPredicate *statePredicateName = [NSPredicate predicateWithFormat: @"%K ==[c] %@", @"name", stateCode];
         NSArray *filteredStateByName = [statesValues filteredArrayUsingPredicate:statePredicateName];
         

@@ -445,8 +445,8 @@ RCT_EXPORT_METHOD(updateApplePayShippingMethod:(NSArray *)shippingMethodsItems
             country = filteredCountry[0];
         }
         
-        NSDictionary *states = [country valueForKey:@"states"];
-        NSDictionary *stateByCode = [states valueForKey:stateCode];
+        NSArray *states = [country valueForKey:@"states"];
+        NSArray *stateByCode = [states valueForKey:stateCode];
         
         if ([states count] == 0) {
             shippingContactUpdateCompletionDeprecate = completion;
@@ -454,11 +454,11 @@ RCT_EXPORT_METHOD(updateApplePayShippingMethod:(NSArray *)shippingMethodsItems
             return;
         }
         
-        NSArray * statesValues = [states allValues];
+        //        NSArray * statesValues = [states allValues];
         NSPredicate *statePredicateName = [NSPredicate predicateWithFormat: @"%K ==[c] %@", @"name", stateCode];
-        NSArray *filteredStateByName = [statesValues filteredArrayUsingPredicate:statePredicateName];
+        NSArray *filteredStateByName = [states filteredArrayUsingPredicate:statePredicateName];
         
-        if ((stateByCode && [stateByCode allValues] > 0) || (filteredStateByName && [filteredStateByName count] > 0)) {
+        if ((stateByCode && [stateByCode count] > 0) || (filteredStateByName && [filteredStateByName count] > 0)) {
             NSString *stateCodeServer = stateCode;
             if (filteredStateByName && [filteredStateByName count] > 0) {
                 stateCodeServer = [filteredStateByName[0] valueForKey:@"code"];
@@ -496,8 +496,8 @@ API_AVAILABLE(ios(11.0), watchos(4.0)) {
             country = filteredCountry[0];
         }
         
-        NSDictionary *states = [country valueForKey:@"states"];
-        NSDictionary *stateByCode = [states valueForKey:stateCode];
+        NSArray *states = [country valueForKey:@"states"];
+        NSArray *stateByCode = [states valueForKey:stateCode];
         
         if ([states count] == 0) {
             shippingContactUpdateCompletion = completion;
@@ -505,11 +505,11 @@ API_AVAILABLE(ios(11.0), watchos(4.0)) {
             return;
         }
         
-        NSArray * statesValues = [states allValues];
+        //        NSArray * statesValues = [states allValues];
         NSPredicate *statePredicateName = [NSPredicate predicateWithFormat: @"%K ==[c] %@", @"name", stateCode];
-        NSArray *filteredStateByName = [statesValues filteredArrayUsingPredicate:statePredicateName];
+        NSArray *filteredStateByName = [states filteredArrayUsingPredicate:statePredicateName];
         
-        if ((stateByCode && [stateByCode allValues] > 0) || (filteredStateByName && [filteredStateByName count] > 0)) {
+        if ((stateByCode && [stateByCode count] > 0) || (filteredStateByName && [filteredStateByName count] > 0)) {
             NSString *stateCodeServer = stateCode;
             if (filteredStateByName && [filteredStateByName count] > 0) {
                 stateCodeServer = [filteredStateByName[0] valueForKey:@"code"];
